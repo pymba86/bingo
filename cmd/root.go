@@ -4,8 +4,11 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"github.com/pymba86/bingo/pkg/engine"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"os"
+	"strings"
 )
 
 var userConfig *engine.Config
@@ -65,5 +68,33 @@ var RootCmd = &cobra.Command{
 }
 
 func Execute() error {
+
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	viper.AutomaticEnv()
+
+	if err := viper.BindPFlags(RootCmd.PersistentFlags()); err != nil {
+		log.WithError(err).Errorf("failed to bind persistent flags. please check the flag settings.")
+		return err
+	}
+
+	if err := viper.BindPFlags(RootCmd.Flags()); err != nil {
+		log.WithError(err).Errorf("failed to bind local flags. please check the flag settings.")
+		return err
+	}
+
 	return RootCmd.Execute()
+}
+
+func init() {
+	RootCmd.PersistentFlags().Bool("debug", false, "debug flag")
+	RootCmd.PersistentFlags().String("config", "bingo.yaml", "config file")
+
+	RootCmd.PersistentFlags().Bool("no-dotenv", false, "disable built-in dotenv")
+	RootCmd.PersistentFlags().String("dotenv", ".env.local", "the dotenv file you want to load")
+
+	RootCmd.PersistentFlags().String("telegram-bot-token", "", "telegram bot token from bot father")
+	RootCmd.PersistentFlags().String("telegram-bot-auth-token", "", "telegram auth token")
+
+	RootCmd.PersistentFlags().String("binance-api-key", "", "binance api key")
+	RootCmd.PersistentFlags().String("binance-api-secret", "", "binance api secret")
 }

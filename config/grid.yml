@@ -1,0 +1,5 @@
+sessions:
+  binance:
+    exchange: binance
+    key: binance
+    secret: binance

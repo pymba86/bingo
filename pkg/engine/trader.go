@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"reflect"
 	"sync"
 )
 
@@ -34,7 +36,15 @@ type Trader struct {
 
 	logger Logger
 
-	graceful Graceful
+	Graceful Graceful
+}
+
+func NewTrader(environ *Environment) *Trader {
+	return &Trader{
+		environment:        environ,
+		exchangeStrategies: make(map[string][]SingleExchangeStrategy),
+		logger:             log.StandardLogger(),
+	}
 }
 
 func (trader *Trader) Configure(config *Config) error {
@@ -45,9 +55,64 @@ func (trader *Trader) Run(ctx context.Context) error {
 
 	trader.Subscribe()
 
+	if err := trader.environment.Start(ctx); err != nil {
+		return err
+	}
 
+	if err := trader.RunAllSingleExchangeStrategy(ctx); err != nil {
+		return err
+	}
+
+	router := &ExchangeOrderExecutionRouter{
+		Notifiability: trader.environment.Notifiability,
+		sessions:      trader.environment.sessions,
+		executors:     make(map[string]OrderExecutor),
+	}
+
+	for sessionID := range trader.environment.sessions {
+		var orderExecutor = trader.getSessionOrderExecutor(sessionID)
+		router.executors[sessionID] = orderExecutor
+	}
+
+	return trader.environment.Connect(ctx)
+}
+
+func (trader *Trader) getSessionOrderExecutor(sessionName string) OrderExecutor {
+	var session = trader.environment.sessions[sessionName]
+
+	// default to base order executor
+	var orderExecutor OrderExecutor = session.OrderExecutor
+
+	return orderExecutor
+}
+
+func (trader *Trader) RunAllSingleExchangeStrategy(ctx context.Context) error {
+	// load and run Session strategies
+	for sessionName, strategies := range trader.exchangeStrategies {
+		var session = trader.environment.sessions[sessionName]
+		var orderExecutor = trader.getSessionOrderExecutor(sessionName)
+		for _, strategy := range strategies {
+			if err := trader.RunSingleExchangeStrategy(ctx, strategy, session, orderExecutor); err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
+}
+
+func (trader *Trader) RunSingleExchangeStrategy(ctx context.Context, strategy SingleExchangeStrategy,
+	session *ExchangeSession, orderExecutor OrderExecutor) error {
+	rs := reflect.ValueOf(strategy)
+
+	// get the struct element
+	rs = rs.Elem()
+
+	if rs.Kind() != reflect.Struct {
+		return errors.New("strategy object is not a struct")
+	}
+
+	return strategy.Run(ctx, orderExecutor, session)
 }
 
 func (trader *Trader) Subscribe() {
@@ -104,4 +169,23 @@ func (trader *Trader) AttachCrossExchangeStrategy(strategy CrossExchangeStrategy
 
 type Graceful struct {
 	shutdownCallbacks []func(ctx context.Context, wg *sync.WaitGroup)
+}
+
+func (g *Graceful) Shutdown(ctx context.Context) {
+	var wg sync.WaitGroup
+	wg.Add(len(g.shutdownCallbacks))
+
+	go g.EmitShutdown(ctx, &wg)
+
+	wg.Wait()
+}
+
+func (g *Graceful) OnShutdown(cb func(ctx context.Context, wg *sync.WaitGroup)) {
+	g.shutdownCallbacks = append(g.shutdownCallbacks, cb)
+}
+
+func (g *Graceful) EmitShutdown(ctx context.Context, wg *sync.WaitGroup) {
+	for _, cb := range g.shutdownCallbacks {
+		cb(ctx, wg)
+	}
 }

@@ -88,7 +88,6 @@ func (m Market) FormatPriceCurrency(val float64) string {
 }
 
 func (m Market) FormatPrice(val float64) string {
-	// p := math.Pow10(m.PricePrecision)
 	return formatPrice(val, m.TickSize)
 }
 

@@ -18,12 +18,10 @@ func (s FuturesSettings) GetFuturesSettings() FuturesSettings {
 	return s
 }
 
-
 type MarginExchange interface {
 	UseMargin()
 	UseIsolatedMargin(symbol string)
 	GetMarginSettings() MarginSettings
-	// QueryMarginAccount(ctx context.Context) (*binance.MarginAccount, error)
 }
 
 type MarginSettings struct {

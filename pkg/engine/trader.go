@@ -23,6 +23,10 @@ type ExchangeSessionSubscriber interface {
 	Subscribe(session *ExchangeSession)
 }
 
+type Validator interface {
+	Validate() error
+}
+
 type CrossExchangeSessionSubscriber interface {
 	CrossSubscribe(sessions map[string]*ExchangeSession)
 }
@@ -47,7 +51,22 @@ func NewTrader(environ *Environment) *Trader {
 	}
 }
 
-func (trader *Trader) Configure(config *Config) error {
+func (trader *Trader) Configure(userConfig *Config) error {
+
+	for _, entry := range userConfig.ExchangeStrategies {
+		for _, mount := range entry.Mounts {
+			log.Infof("attaching strategy %T on %s...", entry.Strategy, mount)
+			if err := trader.AttachStrategyOn(mount, entry.Strategy); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, strategy := range userConfig.CrossExchangeStrategies {
+		log.Infof("attaching cross exchange strategy %T", strategy)
+		trader.AttachCrossExchangeStrategy(strategy)
+	}
+
 	return nil
 }
 
@@ -103,6 +122,7 @@ func (trader *Trader) RunAllSingleExchangeStrategy(ctx context.Context) error {
 
 func (trader *Trader) RunSingleExchangeStrategy(ctx context.Context, strategy SingleExchangeStrategy,
 	session *ExchangeSession, orderExecutor OrderExecutor) error {
+
 	rs := reflect.ValueOf(strategy)
 
 	// get the struct element
@@ -112,7 +132,38 @@ func (trader *Trader) RunSingleExchangeStrategy(ctx context.Context, strategy Si
 		return errors.New("strategy object is not a struct")
 	}
 
+	if err := trader.injectCommonServices(rs); err != nil {
+		return err
+	}
+
+	// If the strategy has Validate() method, run it and check the error
+	if v, ok := strategy.(Validator); ok {
+		if err := v.Validate(); err != nil {
+			return fmt.Errorf("failed to validate the config: %w", err)
+		}
+	}
+
 	return strategy.Run(ctx, orderExecutor, session)
+}
+
+func (trader *Trader) injectCommonServices(rs reflect.Value) error {
+	if err := injectField(rs, "Graceful", &trader.Graceful, true); err != nil {
+		return errors.Wrap(err, "failed to inject Graceful")
+	}
+
+	if err := injectField(rs, "Logger", &trader.logger, false); err != nil {
+		return errors.Wrap(err, "failed to inject Logger")
+	}
+
+	if err := injectField(rs, "Notifiability", &trader.environment.Notifiability, false); err != nil {
+		return errors.Wrap(err, "failed to inject Notifiability")
+	}
+
+	if err := injectField(rs, "TradeService", trader.environment.TradeService, true); err != nil {
+		return errors.Wrap(err, "failed to inject TradeService")
+	}
+
+	return nil
 }
 
 func (trader *Trader) Subscribe() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/pymba86/bingo/pkg/service"
+	log "github.com/sirupsen/logrus"
 	"sync"
 	"time"
 )
@@ -39,7 +40,8 @@ const (
 type Environment struct {
 	Notifiability
 
-	SyncService              *service.SyncService
+	SyncService  *service.SyncService
+	TradeService *service.TradeService
 
 	// startTime is the time of start point (which is used in the backtest)
 	startTime time.Time
@@ -62,6 +64,12 @@ func NewEnvironment() *Environment {
 }
 
 func (e *Environment) Start(ctx context.Context) error {
+	for n := range e.sessions {
+		var session = e.sessions[n]
+		if err := session.InitSymbols(ctx, e); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -107,5 +115,66 @@ func (environ *Environment) Init(ctx context.Context) (err error) {
 	return
 }
 
+func (environ *Environment) setSyncing(status SyncStatus) {
+	environ.syncStatusMutex.Lock()
+	environ.syncStatus = status
+	environ.syncStatusMutex.Unlock()
+}
 
+func (environ *Environment) SyncSession(ctx context.Context, session *ExchangeSession, defaultSymbols ...string) error {
+	if environ.SyncService == nil {
+		return nil
+	}
 
+	environ.syncMutex.Lock()
+	defer environ.syncMutex.Unlock()
+
+	environ.setSyncing(Syncing)
+	defer environ.setSyncing(SyncDone)
+
+	return environ.syncSession(ctx, session, defaultSymbols...)
+}
+
+// Sync syncs all registered exchange sessions
+func (environ *Environment) Sync(ctx context.Context) error {
+	if environ.SyncService == nil {
+		return nil
+	}
+
+	environ.syncMutex.Lock()
+	defer environ.syncMutex.Unlock()
+
+	environ.setSyncing(Syncing)
+	defer environ.setSyncing(SyncDone)
+
+	for _, session := range environ.sessions {
+		if err := environ.syncSession(ctx, session); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (environ *Environment) syncSession(ctx context.Context, session *ExchangeSession, defaultSymbols ...string) error {
+	symbols, err := getSessionSymbols(session, defaultSymbols...)
+	if err != nil {
+		return err
+	}
+
+	log.Infof("syncing symbols %v from session %s", symbols, session.Name)
+
+	return environ.SyncService.SyncSessionSymbols(ctx, session.Exchange, environ.syncStartTime, symbols...)
+}
+
+func getSessionSymbols(session *ExchangeSession, defaultSymbols ...string) ([]string, error) {
+	if session.IsolatedMargin {
+		return []string{session.IsolatedMarginSymbol}, nil
+	}
+
+	if len(defaultSymbols) > 0 {
+		return defaultSymbols, nil
+	}
+
+	return session.FindPossibleSymbols()
+}

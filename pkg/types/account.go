@@ -105,9 +105,9 @@ func (m BalanceMap) Print() {
 		}
 
 		if balance.Locked > 0 {
-			logrus.Infof(" %s: %f (locked %f)", balance.Currency, balance.Available.Float64(), balance.Locked.Float64())
+			logrus.Infof("%s: %f (locked %f)", balance.Currency, balance.Available.Float64(), balance.Locked.Float64())
 		} else {
-			logrus.Infof(" %s: %f", balance.Currency, balance.Available.Float64())
+			logrus.Infof("%s: %f", balance.Currency, balance.Available.Float64())
 		}
 	}
 }

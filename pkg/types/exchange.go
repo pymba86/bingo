@@ -91,3 +91,8 @@ type TradeQueryOptions struct {
 	Limit       int64
 	LastTradeID int64
 }
+
+type ExchangeTradeHistoryService interface {
+	QueryTrades(ctx context.Context, symbol string, options *TradeQueryOptions) ([]Trade, error)
+	QueryClosedOrders(ctx context.Context, symbol string, since, until time.Time, lastOrderID uint64) (orders []Order, err error)
+}

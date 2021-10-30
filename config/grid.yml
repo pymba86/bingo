@@ -3,3 +3,8 @@ sessions:
     exchange: binance
     key: binance
     secret: binance
+
+exchangeStrategies:
+  - on: binance
+    grid:
+      symbol: BTCUSDT

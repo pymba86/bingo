@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"github.com/pymba86/bingo/pkg/cmdutil"
 	"github.com/pymba86/bingo/pkg/fixedpoint"
+	"github.com/pymba86/bingo/pkg/service"
 	"github.com/pymba86/bingo/pkg/types"
+	"github.com/pymba86/bingo/pkg/util"
 	log "github.com/sirupsen/logrus"
+	"strings"
 	"time"
 )
 
@@ -100,7 +103,6 @@ type ExchangeSession struct {
 	initializedSymbols map[string]struct{}
 
 	logger *log.Entry
-
 }
 
 func InitExchangeSession(name string, session *ExchangeSession) error {
@@ -221,3 +223,114 @@ func (session *ExchangeSession) Init(ctx context.Context, environ *Environment) 
 	return nil
 }
 
+func (session *ExchangeSession) InitSymbols(ctx context.Context, environ *Environment) error {
+	if err := session.initUsedSymbols(ctx, environ); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (session *ExchangeSession) initUsedSymbols(ctx context.Context, environ *Environment) error {
+	for symbol := range session.usedSymbols {
+		if err := session.initSymbol(ctx, environ, symbol); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (session *ExchangeSession) initSymbol(ctx context.Context, environ *Environment, symbol string) error {
+
+	if _, ok := session.initializedSymbols[symbol]; ok {
+		return nil
+	}
+
+	market, ok := session.markets[symbol]
+	if !ok {
+		return fmt.Errorf("market %s is not defined", symbol)
+	}
+
+	var err error
+	var trades []types.Trade
+	if environ.SyncService != nil {
+		tradingFeeCurrency := session.Exchange.PlatformFeeCurrency()
+		if strings.HasPrefix(symbol, tradingFeeCurrency) {
+			trades, err = environ.TradeService.QueryForTradingFeeCurrency(session.Exchange.Name(), symbol, tradingFeeCurrency)
+		} else {
+			trades, err = environ.TradeService.Query(service.QueryTradesOptions{
+				Exchange: session.Exchange.Name(),
+				Symbol:   symbol,
+			})
+		}
+
+		if err != nil {
+			return err
+		}
+
+		log.Infof("symbol %s: %d trades loaded", symbol, len(trades))
+	}
+
+	session.Trades[symbol] = &types.TradeSlice{Trades: trades}
+	session.UserDataStream.OnTradeUpdate(func(trade types.Trade) {
+		session.Trades[symbol].Append(trade)
+	})
+
+	position := &Position{
+		Symbol:        symbol,
+		BaseCurrency:  market.BaseCurrency,
+		QuoteCurrency: market.QuoteCurrency,
+	}
+	position.AddTrades(trades)
+	position.BindStream(session.UserDataStream)
+	session.positions[symbol] = position
+
+	session.initializedSymbols[symbol] = struct{}{}
+	return nil
+}
+
+func (session *ExchangeSession) FindPossibleSymbols() (symbols []string, err error) {
+	// If the session is an isolated margin session, there will be only the isolated margin symbol
+	if session.Margin && session.IsolatedMargin {
+		return []string{
+			session.IsolatedMarginSymbol,
+		}, nil
+	}
+
+	var balances = session.Account.Balances()
+	var fiatAssets []string
+
+	for _, currency := range types.FiatCurrencies {
+		if balance, ok := balances[currency]; ok && balance.Total() > 0 {
+			fiatAssets = append(fiatAssets, currency)
+		}
+	}
+
+	var symbolMap = map[string]struct{}{}
+
+	for _, market := range session.Markets() {
+		// ignore the markets that are not fiat currency markets
+		if !util.StringSliceContains(fiatAssets, market.QuoteCurrency) {
+			continue
+		}
+
+		// ignore the asset that we don't have in the balance sheet
+		balance, hasAsset := balances[market.BaseCurrency]
+		if !hasAsset || balance.Total() == 0 {
+			continue
+		}
+
+		symbolMap[market.Symbol] = struct{}{}
+	}
+
+	for s := range symbolMap {
+		symbols = append(symbols, s)
+	}
+
+	return symbols, nil
+}
+
+func (session *ExchangeSession) Markets() map[string]types.Market {
+	return session.markets
+}

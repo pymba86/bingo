@@ -50,6 +50,10 @@ func runConfig(basectx context.Context, userConfig *engine.Config,
 		return err
 	}
 
+	if err := environ.Sync(ctx); err != nil {
+		return err
+	}
+
 	trader := engine.NewTrader(environ)
 	if err := trader.Configure(userConfig); err != nil {
 		return err
@@ -61,7 +65,7 @@ func runConfig(basectx context.Context, userConfig *engine.Config,
 
 	cmdutil.WaitForSignal(ctx, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Infof("shutting down stratgies...")
+	log.Infof("shutting down strategies...")
 	shutdownCtx, cancelShutdown := context.WithDeadline(ctx, time.Now().Add(30*time.Second))
 	trader.Graceful.Shutdown(shutdownCtx)
 	cancelShutdown()

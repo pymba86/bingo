@@ -5,7 +5,6 @@ import (
 	"github.com/pymba86/bingo/pkg/fixedpoint"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-	"strings"
 	"sync"
 )
 
@@ -13,103 +12,6 @@ var debugBalance = false
 
 func init() {
 	debugBalance = viper.GetBool("debug-balance")
-}
-
-type Balance struct {
-	Currency  string           `json:"currency"`
-	Available fixedpoint.Value `json:"available"`
-	Locked    fixedpoint.Value `json:"locked"`
-}
-
-func (b Balance) Total() fixedpoint.Value {
-	return b.Available + b.Locked
-}
-
-func (b Balance) String() string {
-	if b.Locked > 0 {
-		return fmt.Sprintf("%s: %f (locked %f)", b.Currency, b.Available.Float64(), b.Locked.Float64())
-	}
-
-	return fmt.Sprintf("%s: %f", b.Currency, b.Available.Float64())
-}
-
-type Asset struct {
-	Currency string           `json:"currency"`
-	Total    fixedpoint.Value `json:"total"`
-	InUSD    fixedpoint.Value `json:"inUSD"`
-	InBTC    fixedpoint.Value `json:"inBTC"`
-}
-
-type AssetMap map[string]Asset
-
-type BalanceMap map[string]Balance
-
-func (m BalanceMap) String() string {
-	var ss []string
-	for _, b := range m {
-		ss = append(ss, b.String())
-	}
-
-	return "BalanceMap[" + strings.Join(ss, ", ") + "]"
-}
-
-func (m BalanceMap) Copy() (d BalanceMap) {
-	d = make(BalanceMap)
-	for c, b := range m {
-		d[c] = b
-	}
-	return d
-}
-
-func (m BalanceMap) Assets(prices map[string]float64) AssetMap {
-	assets := make(AssetMap)
-
-	for currency, b := range m {
-		if b.Locked == 0 && b.Available == 0 {
-			continue
-		}
-
-		asset := Asset{
-			Currency: currency,
-			Total:    b.Available + b.Locked,
-		}
-
-		btcusdt, hasBtcPrice := prices["BTCUSDT"]
-
-		usdMarkets := []string{currency + "USDT", currency + "USDC", currency + "USD", "USDT" + currency}
-		for _, market := range usdMarkets {
-			if val, ok := prices[market]; ok {
-
-				if strings.HasPrefix(market, "USD") {
-					asset.InUSD = fixedpoint.NewFromFloat(asset.Total.Float64() / val)
-				} else {
-					asset.InUSD = asset.Total.MulFloat64(val)
-				}
-
-				if hasBtcPrice {
-					asset.InBTC = fixedpoint.NewFromFloat(asset.InUSD.Float64() / btcusdt)
-				}
-			}
-		}
-
-		assets[currency] = asset
-	}
-
-	return assets
-}
-
-func (m BalanceMap) Print() {
-	for _, balance := range m {
-		if balance.Available == 0 && balance.Locked == 0 {
-			continue
-		}
-
-		if balance.Locked > 0 {
-			logrus.Infof("%s: %f (locked %f)", balance.Currency, balance.Available.Float64(), balance.Locked.Float64())
-		} else {
-			logrus.Infof("%s: %f", balance.Currency, balance.Available.Float64())
-		}
-	}
 }
 
 type Account struct {
